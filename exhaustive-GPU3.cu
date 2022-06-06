@@ -66,19 +66,25 @@ struct meu_functor
     }
 };
 
+
+
+
 // ----- Funções ----- //
 
 // Função que calcula os scores de todas as combinações do batch passado para a GPU 
 // e retorna o melhor deles 
-int gpu_score(vector<combination> &combinations){
+int gpu_score(vector<vector<char>> subseqs_a, vector<vector<char>> subseqs_b, int global_max){
 
     int maior = 0;
+    int max_possible=0;
+     for (auto& S : subseqs_a){
+      for (auto& T : subseqs_b){
+        int N = S.size();
+        int M = T.size();
 
-    for (auto& el : combinations){
-        vector<char> S = el.seq_a;
-        vector<char> T = el.seq_b;
-        int N = el.seq_a.size();
-        int M = el.seq_b.size();
+        if (N>M) max_possible = M*2;
+        else max_possible = N*2;
+        if (maior<max_possible){
 
 
         thrust::device_vector<int> calc[2]; // precisa ser um vector
@@ -107,20 +113,16 @@ int gpu_score(vector<combination> &combinations){
         int max = calc[1].data()[calc[1].size()-1];
 
         if (max>maior) maior = max;
+
+        if (max >= global_max) return max;
+
+        }
+
+    }
     }
 
     return maior;
 }
-
-// Fução usada para repartir o vetor em batches para passar para a GPU
-void slicing(vector<combination>& arr, int X, int Y)
-{
-    auto start = arr.begin() + X;
-    auto end = arr.begin() + Y + 1;
-    vector<combination> result(Y - X + 1);
-    copy(start, end, result.begin());
-}
-
 
 // Fução usada para gerar as subsequências
 void gera_subseq(string seq, int start_point, int end_point, vector<vector<char>>& matriz_subseq){
@@ -140,7 +142,6 @@ void gera_subseq(string seq, int start_point, int end_point, vector<vector<char>
     }
 }
 
-
 int main() {
     double init_time, final_time;
     init_time = omp_get_wtime();
@@ -150,12 +151,13 @@ int main() {
     string base;
 
     cin >> N >> M;
+    
     string S_str;
     string T_str;
 
     cin >> S_str;
     cin >> T_str;
-    
+
 // Gerando as subsequências
     vector<vector<char>> subseqs_a;
     vector<vector<char>> subseqs_b;
@@ -166,82 +168,19 @@ int main() {
     vector<char> S(S_str.begin(), S_str.end());
 
 // Calculando os scores
-    vector<combination> combinations((long)subseqs_a.size()*(long)subseqs_b.size());;  
-
-    long i=0;
-    int melhor_valor = -1;
     int melhor_valor_g = -1;  // melhor valor global
-    int val=-1;
-    
-    int max_possible = 0;
-    int branch_bound_saves = 0;
+    int global_max = 0;
 
-    int max_vector_size = 600000;  // máximo definido para não estourar a memória
-    int limit=max_vector_size/4;  // tamanho dos batches a serem enviados para a GPU
+    if (T.size() > S.size()) global_max = 2*S.size();
+    else global_max = 2*T.size();
 
+    melhor_valor_g = gpu_score(subseqs_a,subseqs_b, global_max);
 
-    for (auto& sub_a : subseqs_a){
-        for (auto& sub_b : subseqs_b){
-            if (sub_a.size() < sub_b.size())
-                max_possible = sub_a.size()*2;
-            else max_possible = sub_b.size()*2;
+    // cout << endl << "result: " << melhor_valor_g << endl;
+    // final_time = omp_get_wtime() - init_time;
+    // cout << "tempo: " << final_time << endl;
 
-
-            if (max_possible > melhor_valor_g){
-                combinations.push_back({i,sub_a, sub_b});
-                i+=1;
-            }else branch_bound_saves++;
-
-            if (i>=max_vector_size){ // divisão em sub blocos para não estourar a memória
-                
-                #pragma omp parallel for reduction(max:melhor_valor)
-                for (int index=0; index<combinations.size(); index+=limit){
-                    slicing(combinations, index, index+limit-1); 
-                    val = gpu_score(combinations);
-                    if (val>melhor_valor)melhor_valor=val;
-                } 
-
-                if (melhor_valor > melhor_valor_g){
-                    melhor_valor_g = melhor_valor;
-                }
-          
-            i = 0;   
-            combinations.clear();             
-            }
-        }
-    }
-
-    #pragma omp parallel for reduction(max:melhor_valor)
-    for (int index=0; index<combinations.size(); index+=limit){ 
-        if (index+limit>combinations.size()){  // para não acessar posições inválidas no vetor
-            int start = index;  
-            int end =combinations.size()-1;
-
-            // cout << "start: " << start << endl;
-            // cout << "end: " << end << endl;
-            slicing(combinations, start, end);
-            val = gpu_score(combinations);
-        }else{
-            slicing(combinations, index, index+limit-1);
-            val = gpu_score(combinations);
-
-            // cout << "start: " << index << endl;
-            // cout << "end: " << index+limit << endl;        
-        
-        }
-        // cout << "val: " << val << endl;
-        if (val>melhor_valor)melhor_valor=val;
-    }
-    
-        
-    if (melhor_valor > melhor_valor_g){
-        melhor_valor_g = melhor_valor;
-    }
-
-    cout << endl << "result: " << melhor_valor_g << endl;
-    final_time = omp_get_wtime() - init_time;
-    cout << "tempo: " << final_time << endl;
-    cout << "branch_bound_saves: " << branch_bound_saves << endl;
+    cout << melhor_valor_g << endl;
 
     return 0;
 
